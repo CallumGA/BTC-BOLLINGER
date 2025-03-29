@@ -6,7 +6,7 @@ import os
 from dotenv import load_dotenv
 from coinbase.rest import RESTClient
 
-# toggle between live trading and paper trading
+# Toggle between live trading and paper trading
 PAPER_TRADING = True
 
 load_dotenv()
@@ -23,7 +23,7 @@ timeframe = 'FIFTEEN_MINUTE'
 initial_usd = 1000
 paper_balances = {'BTC': 0, 'USD': initial_usd}
 
-trade_history = pd.DataFrame(columns=['Timestamp', 'Type', 'Price', 'Amount', 'Profit/Loss', 'USD Balance', 'BTC Balance'])
+trade_history = pd.DataFrame(columns=['Timestamp', 'Type', 'Price (USD)', 'Amount', 'Profit/Loss (USD)', 'USD Balance', 'BTC Balance'])
 
 # Fetch historical candlestick data from Coinbase Cloud
 def fetch_ohlcv(symbol, timeframe='FIFTEEN_MINUTE', limit=100):
@@ -50,10 +50,7 @@ def fetch_ohlcv(symbol, timeframe='FIFTEEN_MINUTE', limit=100):
 
     df = pd.DataFrame(candle_data, columns=['time', 'low', 'high', 'open', 'close', 'volume'])
     df = df.sort_values('time')
-
-    # Explicitly convert 'time' to numeric type before conversion
     df['time'] = pd.to_datetime(pd.to_numeric(df['time']), unit='s')
-
     df[['open', 'high', 'low', 'close', 'volume']] = df[['open', 'high', 'low', 'close', 'volume']].astype(float)
 
     return df
@@ -71,7 +68,7 @@ def trading_logic(df):
     elif latest['close'] >= latest['BBU_20_2.0'] and latest['RSI'] > 70:
         return 'sell'
     else:
-        return 'hold'
+        return 'sell'
 
 while True:
     df = fetch_ohlcv(symbol, timeframe)
@@ -88,8 +85,6 @@ while True:
 
     print(f"Current Price: ${price:.2f}, Action: {action}")
 
-    profit_loss = 0
-
     if action == 'buy' and usd_balance > 50:
         amount = 50 / price
         if PAPER_TRADING:
@@ -100,14 +95,15 @@ while True:
             new_trade = {
                 'Timestamp': datetime.now(),
                 'Type': 'Buy',
-                'Price': price,
+                'Price (USD)': price,
                 'Amount': amount,
-                'Profit/Loss': '-',
-                'USD Balance': paper_balances['USD'],
-                'BTC Balance': paper_balances['BTC']
+                'Profit/Loss (USD)': '-',
+                'USD Balance': round(paper_balances['USD'], 2),
+                'BTC Balance': round(paper_balances['BTC'], 8)
             }
 
             trade_history = pd.concat([trade_history, pd.DataFrame([new_trade])], ignore_index=True)
+            trade_history.to_csv('trade_history.csv', index=False)
         else:
             client.create_order(client_order_id=str(datetime.now().timestamp()),
                                 product_id=symbol,
@@ -116,33 +112,36 @@ while True:
                                 funds='50')
             print("Bought BTC for $50")
 
-    elif action == 'sell' and btc_balance > 0.001:
-        total_usd = btc_balance * price
+    elif action == 'sell' and btc_balance >= 0.00001:
+        amount_to_sell = btc_balance
+        total_usd = amount_to_sell * price
+
         if PAPER_TRADING:
-            profit_loss = total_usd - (initial_usd - paper_balances['USD'])
+            original_investment = initial_usd - paper_balances['USD']
+            profit_loss_usd = total_usd - original_investment
             paper_balances['USD'] += total_usd
-            print("Paper Sold BTC:", btc_balance)
-            paper_balances['BTC'] = 0
+            paper_balances['BTC'] -= amount_to_sell
+            print("Paper Sold BTC:", amount_to_sell)
 
             new_trade = {
                 'Timestamp': datetime.now(),
                 'Type': 'Sell',
-                'Price': price,
-                'Amount': btc_balance,
-                'Profit/Loss': round(profit_loss, 2),
-                'USD Balance': paper_balances['USD'],
-                'BTC Balance': paper_balances['BTC']
+                'Price (USD)': price,
+                'Amount': amount_to_sell,
+                'Profit/Loss (USD)': round(profit_loss_usd, 2),
+                'USD Balance': round(paper_balances['USD'], 2),
+                'BTC Balance': round(paper_balances['BTC'], 8)
             }
 
             trade_history = pd.concat([trade_history, pd.DataFrame([new_trade])], ignore_index=True)
+            trade_history.to_csv('trade_history.csv', index=False)
+            print("Sell trade successfully logged to CSV.")
         else:
             client.create_order(client_order_id=str(datetime.now().timestamp()),
                                 product_id=symbol,
                                 side='SELL',
                                 order_type='MARKET',
-                                size=str(btc_balance))
-            print("Sold BTC:", btc_balance)
-
-    trade_history.to_csv('trade_history.csv', index=False)
+                                size=str(amount_to_sell))
+            print("Sold BTC:", amount_to_sell)
 
     time.sleep(900)
