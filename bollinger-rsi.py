@@ -6,12 +6,11 @@ import os
 from dotenv import load_dotenv
 from coinbase.rest import RESTClient
 
-# Toggle between live trading and paper trading
+# toggle live/paper trading
 PAPER_TRADING = True
 
 load_dotenv()
 
-# Coinbase Cloud API client
 api_key = os.getenv('COINBASE_API_KEY')
 api_secret = os.getenv('COINBASE_API_SECRET').replace('\\n', '\n')
 
@@ -72,11 +71,11 @@ def trading_logic(df):
         return 'sell'
 
     if latest['close'] <= latest['BBL_20_2.0'] and latest['RSI'] < 30 and latest['MA50'] > previous['MA50']:
-        stop_loss_price = latest['close']  # Update stop loss baseline
+        stop_loss_price = latest['close']
         return 'buy'
 
     elif latest['close'] >= latest['BBU_20_2.0'] and latest['RSI'] > 70 and latest['MA50'] < previous['MA50']:
-        stop_loss_price = None  # Reset stop loss
+        stop_loss_price = None
         return 'sell'
 
     return 'hold'
