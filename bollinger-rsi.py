@@ -81,9 +81,14 @@ def trading_logic(df):
     return 'hold'
 
 while True:
-    df = fetch_ohlcv(symbol, timeframe)
-    action = trading_logic(df)
-    price = float(client.get_product(product_id=symbol)['price'])
+    try:
+        df = fetch_ohlcv(symbol, timeframe)
+        action = trading_logic(df)
+        price = float(client.get_product(product_id=symbol)['price'])
+    except Exception as e:
+        print(f"⚠️ Error during data fetch or analysis: {e}")
+        time.sleep(60)
+        continue
 
     if PAPER_TRADING:
         btc_balance = paper_balances['BTC']
