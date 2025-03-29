@@ -69,7 +69,7 @@ while True:
             paper_balances['USDT'] -= 50
             print("Paper Bought BTC:", amount)
 
-            trade_history = trade_history.append({
+            new_trade = {
                 'Timestamp': datetime.now(),
                 'Type': 'Buy',
                 'Price': price,
@@ -77,7 +77,9 @@ while True:
                 'Profit/Loss': '-',
                 'USDT Balance': paper_balances['USDT'],
                 'BTC Balance': paper_balances['BTC']
-            }, ignore_index=True)
+            }
+
+            trade_history = pd.concat([trade_history, pd.DataFrame([new_trade])], ignore_index=True)
 
     elif action == 'sell' and btc_balance > 0.001:
         total_usdt = btc_balance * price
@@ -87,7 +89,7 @@ while True:
             print("Paper Sold BTC:", btc_balance)
             paper_balances['BTC'] = 0
 
-            trade_history = trade_history.append({
+            new_trade = {
                 'Timestamp': datetime.now(),
                 'Type': 'Sell',
                 'Price': price,
@@ -95,7 +97,9 @@ while True:
                 'Profit/Loss': round(profit_loss, 2),
                 'USDT Balance': paper_balances['USDT'],
                 'BTC Balance': paper_balances['BTC']
-            }, ignore_index=True)
+            }
+
+            trade_history = pd.concat([trade_history, pd.DataFrame([new_trade])], ignore_index=True)
 
     trade_history.to_csv('trade_history.csv', index=False)
 
