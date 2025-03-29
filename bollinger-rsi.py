@@ -6,7 +6,6 @@ import os
 from dotenv import load_dotenv
 from coinbase.rest import RESTClient
 
-# toggle live/paper trading
 PAPER_TRADING = True
 
 load_dotenv()
@@ -20,8 +19,11 @@ symbol = 'BTC-USD'
 timeframe = 'FIFTEEN_MINUTE'
 
 initial_usd = 1000
-paper_balances = {'BTC': 0, 'USD': initial_usd}
+RISK_PER_TRADE_USD = 25
+ATR_PERIOD = 14
+MIN_TRADE_USD = 10
 
+paper_balances = {'BTC': 0, 'USD': initial_usd}
 trade_history = pd.DataFrame(columns=['Timestamp', 'Type', 'Price (USD)', 'Amount', 'Profit/Loss (USD)', 'USD Balance', 'BTC Balance'])
 
 stop_loss_price = None
@@ -52,7 +54,6 @@ def fetch_ohlcv(symbol, timeframe='FIFTEEN_MINUTE', limit=100):
     df = df.sort_values('time')
     df['time'] = pd.to_datetime(pd.to_numeric(df['time']), unit='s')
     df[['open', 'high', 'low', 'close', 'volume']] = df[['open', 'high', 'low', 'close', 'volume']].astype(float)
-
     return df
 
 def trading_logic(df):
@@ -61,29 +62,30 @@ def trading_logic(df):
     df['RSI'] = ta.rsi(df['close'], length=14)
     bbands = ta.bbands(df['close'], length=20, std=2.0)
     ma50 = ta.sma(df['close'], length=50)
-    df = df.join([bbands, ma50.rename('MA50')])
+    atr = ta.atr(df['high'], df['low'], df['close'], length=ATR_PERIOD)
+    df = df.join([bbands, ma50.rename('MA50'), atr.rename('ATR')])
 
     latest = df.iloc[-1]
     previous = df.iloc[-2]
 
     if stop_loss_price and latest['close'] < stop_loss_price * 0.95:
         print("Stop loss triggered.")
-        return 'sell'
+        return 'sell', latest['ATR']
 
     if latest['close'] <= latest['BBL_20_2.0'] and latest['RSI'] < 30 and latest['MA50'] > previous['MA50']:
         stop_loss_price = latest['close']
-        return 'buy'
+        return 'buy', latest['ATR']
 
     elif latest['close'] >= latest['BBU_20_2.0'] and latest['RSI'] > 70 and latest['MA50'] < previous['MA50']:
         stop_loss_price = None
-        return 'sell'
+        return 'sell', latest['ATR']
 
-    return 'hold'
+    return 'hold', latest['ATR']
 
 while True:
     try:
         df = fetch_ohlcv(symbol, timeframe)
-        action = trading_logic(df)
+        action, current_atr = trading_logic(df)
         price = float(client.get_product(product_id=symbol)['price'])
     except Exception as e:
         print(f"⚠️ Error during data fetch or analysis: {e}")
@@ -100,32 +102,38 @@ while True:
 
     print(f"Current Price: ${price:.2f}, Action: {action}")
 
-    if action == 'buy' and usd_balance > 50:
-        amount = 50 / price
-        if PAPER_TRADING:
-            paper_balances['BTC'] += amount
-            paper_balances['USD'] -= 50
-            print("Paper Bought BTC:", amount)
+    if action == 'buy' and current_atr and current_atr > 0:
+        stop_loss_pct = 0.05
+        risk_per_unit = price * stop_loss_pct
+        max_position_size_usd = min(RISK_PER_TRADE_USD / stop_loss_pct, usd_balance)
 
-            new_trade = {
-                'Timestamp': datetime.now(),
-                'Type': 'Buy',
-                'Price (USD)': price,
-                'Amount': amount,
-                'Profit/Loss (USD)': '-',
-                'USD Balance': round(paper_balances['USD'], 2),
-                'BTC Balance': round(paper_balances['BTC'], 8)
-            }
+        if max_position_size_usd >= MIN_TRADE_USD:
+            amount = max_position_size_usd / price
 
-            trade_history = pd.concat([trade_history, pd.DataFrame([new_trade])], ignore_index=True)
-            trade_history.to_csv('trade_history.csv', index=False)
-        else:
-            client.create_order(client_order_id=str(datetime.now().timestamp()),
-                                product_id=symbol,
-                                side='BUY',
-                                order_type='MARKET',
-                                funds='50')
-            print("Bought BTC for $50")
+            if PAPER_TRADING:
+                paper_balances['BTC'] += amount
+                paper_balances['USD'] -= max_position_size_usd
+                print(f"Paper Bought BTC: {amount} for ${round(max_position_size_usd, 2)}")
+
+                new_trade = {
+                    'Timestamp': datetime.now(),
+                    'Type': 'Buy',
+                    'Price (USD)': price,
+                    'Amount': amount,
+                    'Profit/Loss (USD)': '-',
+                    'USD Balance': round(paper_balances['USD'], 2),
+                    'BTC Balance': round(paper_balances['BTC'], 8)
+                }
+
+                trade_history = pd.concat([trade_history, pd.DataFrame([new_trade])], ignore_index=True)
+                trade_history.to_csv('trade_history.csv', index=False)
+            else:
+                client.create_order(client_order_id=str(datetime.now().timestamp()),
+                                    product_id=symbol,
+                                    side='BUY',
+                                    order_type='MARKET',
+                                    funds=str(round(max_position_size_usd, 2)))
+                print(f"Bought BTC for ${round(max_position_size_usd, 2)}")
 
     elif action == 'sell' and btc_balance >= 0.00001:
         amount_to_sell = btc_balance
