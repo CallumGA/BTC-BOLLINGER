@@ -25,7 +25,8 @@ paper_balances = {'BTC': 0, 'USD': initial_usd}
 
 trade_history = pd.DataFrame(columns=['Timestamp', 'Type', 'Price (USD)', 'Amount', 'Profit/Loss (USD)', 'USD Balance', 'BTC Balance'])
 
-# Fetch historical candlestick data from Coinbase Cloud
+stop_loss_price = None
+
 def fetch_ohlcv(symbol, timeframe='FIFTEEN_MINUTE', limit=100):
     end = datetime.now(UTC)
     start = end - timedelta(minutes=15 * limit)
@@ -55,20 +56,30 @@ def fetch_ohlcv(symbol, timeframe='FIFTEEN_MINUTE', limit=100):
 
     return df
 
-# Determine trading action based on RSI and Bollinger Bands
 def trading_logic(df):
+    global stop_loss_price
+
     df['RSI'] = ta.rsi(df['close'], length=14)
     bbands = ta.bbands(df['close'], length=20, std=2.0)
-    df = df.join(bbands)
+    ma50 = ta.sma(df['close'], length=50)
+    df = df.join([bbands, ma50.rename('MA50')])
 
     latest = df.iloc[-1]
+    previous = df.iloc[-2]
 
-    if latest['close'] <= latest['BBL_20_2.0'] and latest['RSI'] < 30:
-        return 'buy'
-    elif latest['close'] >= latest['BBU_20_2.0'] and latest['RSI'] > 70:
+    if stop_loss_price and latest['close'] < stop_loss_price * 0.95:
+        print("Stop loss triggered.")
         return 'sell'
-    else:
-        return 'hold'
+
+    if latest['close'] <= latest['BBL_20_2.0'] and latest['RSI'] < 30 and latest['MA50'] > previous['MA50']:
+        stop_loss_price = latest['close']  # Update stop loss baseline
+        return 'buy'
+
+    elif latest['close'] >= latest['BBU_20_2.0'] and latest['RSI'] > 70 and latest['MA50'] < previous['MA50']:
+        stop_loss_price = None  # Reset stop loss
+        return 'sell'
+
+    return 'hold'
 
 while True:
     df = fetch_ohlcv(symbol, timeframe)
