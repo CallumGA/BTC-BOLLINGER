@@ -1,36 +1,64 @@
-import ccxt
 import pandas as pd
 import pandas_ta as ta
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, UTC
 import os
 from dotenv import load_dotenv
+from coinbase.rest import RESTClient
 
 # toggle between live trading and paper trading
 PAPER_TRADING = True
 
 load_dotenv()
 
-exchange = ccxt.kucoin({
-    'apiKey': os.getenv('KUCOIN_API_KEY'),
-    'secret': os.getenv('KUCOIN_API_SECRET'),
-    'password': os.getenv('KUCOIN_API_PASSPHRASE')
-})
+# Coinbase Cloud API client
+api_key = os.getenv('COINBASE_API_KEY')
+api_secret = os.getenv('COINBASE_API_SECRET').replace('\\n', '\n')
 
-symbol = 'BTC/USDT'
-timeframe = '15m'
+client = RESTClient(api_key=api_key, api_secret=api_secret)
 
-initial_usdt = 1000
-paper_balances = {'BTC': 0, 'USDT': initial_usdt}
+symbol = 'BTC-USD'
+timeframe = 'FIFTEEN_MINUTE'
 
-trade_history = pd.DataFrame(columns=['Timestamp', 'Type', 'Price', 'Amount', 'Profit/Loss', 'USDT Balance', 'BTC Balance'])
+initial_usd = 1000
+paper_balances = {'BTC': 0, 'USD': initial_usd}
 
-def fetch_ohlcv(symbol, timeframe='15m', limit=100):
-    bars = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
-    df = pd.DataFrame(bars, columns=['time', 'open', 'high', 'low', 'close', 'volume'])
-    df['time'] = pd.to_datetime(df['time'], unit='ms')
+trade_history = pd.DataFrame(columns=['Timestamp', 'Type', 'Price', 'Amount', 'Profit/Loss', 'USD Balance', 'BTC Balance'])
+
+# Fetch historical candlestick data from Coinbase Cloud
+def fetch_ohlcv(symbol, timeframe='FIFTEEN_MINUTE', limit=100):
+    end = datetime.now(UTC)
+    start = end - timedelta(minutes=15 * limit)
+
+    candles = client.get_candles(
+        product_id=symbol,
+        granularity=timeframe,
+        start=int(start.timestamp()),
+        end=int(end.timestamp())
+    )
+
+    candle_data = [
+        [
+            candle['start'],
+            candle['low'],
+            candle['high'],
+            candle['open'],
+            candle['close'],
+            candle['volume']
+        ] for candle in candles['candles']
+    ]
+
+    df = pd.DataFrame(candle_data, columns=['time', 'low', 'high', 'open', 'close', 'volume'])
+    df = df.sort_values('time')
+
+    # Explicitly convert 'time' to numeric type before conversion
+    df['time'] = pd.to_datetime(pd.to_numeric(df['time']), unit='s')
+
+    df[['open', 'high', 'low', 'close', 'volume']] = df[['open', 'high', 'low', 'close', 'volume']].astype(float)
+
     return df
 
+# Determine trading action based on RSI and Bollinger Bands
 def trading_logic(df):
     df['RSI'] = ta.rsi(df['close'], length=14)
     bbands = ta.bbands(df['close'], length=20, std=2.0)
@@ -48,25 +76,25 @@ def trading_logic(df):
 while True:
     df = fetch_ohlcv(symbol, timeframe)
     action = trading_logic(df)
-    price = exchange.fetch_ticker(symbol)['last']
+    price = float(client.get_product(product_id=symbol)['price'])
 
     if PAPER_TRADING:
         btc_balance = paper_balances['BTC']
-        usdt_balance = paper_balances['USDT']
+        usd_balance = paper_balances['USD']
     else:
-        balance = exchange.fetch_balance()
-        btc_balance = balance['BTC']['free']
-        usdt_balance = balance['USDT']['free']
+        accounts = client.get_accounts()
+        btc_balance = float(next((a['available_balance']['value'] for a in accounts['accounts'] if a['currency'] == 'BTC'), 0))
+        usd_balance = float(next((a['available_balance']['value'] for a in accounts['accounts'] if a['currency'] == 'USD'), 0))
 
     print(f"Current Price: ${price:.2f}, Action: {action}")
 
     profit_loss = 0
 
-    if action == 'buy' and usdt_balance > 50:
+    if action == 'buy' and usd_balance > 50:
         amount = 50 / price
         if PAPER_TRADING:
             paper_balances['BTC'] += amount
-            paper_balances['USDT'] -= 50
+            paper_balances['USD'] -= 50
             print("Paper Bought BTC:", amount)
 
             new_trade = {
@@ -75,17 +103,24 @@ while True:
                 'Price': price,
                 'Amount': amount,
                 'Profit/Loss': '-',
-                'USDT Balance': paper_balances['USDT'],
+                'USD Balance': paper_balances['USD'],
                 'BTC Balance': paper_balances['BTC']
             }
 
             trade_history = pd.concat([trade_history, pd.DataFrame([new_trade])], ignore_index=True)
+        else:
+            client.create_order(client_order_id=str(datetime.now().timestamp()),
+                                product_id=symbol,
+                                side='BUY',
+                                order_type='MARKET',
+                                funds='50')
+            print("Bought BTC for $50")
 
     elif action == 'sell' and btc_balance > 0.001:
-        total_usdt = btc_balance * price
+        total_usd = btc_balance * price
         if PAPER_TRADING:
-            profit_loss = total_usdt - (initial_usdt - paper_balances['USDT'])
-            paper_balances['USDT'] += total_usdt
+            profit_loss = total_usd - (initial_usd - paper_balances['USD'])
+            paper_balances['USD'] += total_usd
             print("Paper Sold BTC:", btc_balance)
             paper_balances['BTC'] = 0
 
@@ -95,11 +130,18 @@ while True:
                 'Price': price,
                 'Amount': btc_balance,
                 'Profit/Loss': round(profit_loss, 2),
-                'USDT Balance': paper_balances['USDT'],
+                'USD Balance': paper_balances['USD'],
                 'BTC Balance': paper_balances['BTC']
             }
 
             trade_history = pd.concat([trade_history, pd.DataFrame([new_trade])], ignore_index=True)
+        else:
+            client.create_order(client_order_id=str(datetime.now().timestamp()),
+                                product_id=symbol,
+                                side='SELL',
+                                order_type='MARKET',
+                                size=str(btc_balance))
+            print("Sold BTC:", btc_balance)
 
     trade_history.to_csv('trade_history.csv', index=False)
 
