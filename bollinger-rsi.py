@@ -68,7 +68,7 @@ def trading_logic(df):
     elif latest['close'] >= latest['BBU_20_2.0'] and latest['RSI'] > 70:
         return 'sell'
     else:
-        return 'sell'
+        return 'hold'
 
 while True:
     df = fetch_ohlcv(symbol, timeframe)
