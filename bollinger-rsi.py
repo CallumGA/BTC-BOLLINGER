@@ -19,7 +19,7 @@ symbol = 'BTC-USD'
 timeframe = 'FIFTEEN_MINUTE'
 
 initial_usd = 1000
-RISK_PER_TRADE_USD = 50
+RISK_PER_TRADE_USD = 40
 ATR_PERIOD = 14
 MIN_TRADE_USD = 10
 
@@ -68,15 +68,15 @@ def trading_logic(df):
     latest = df.iloc[-1]
     previous = df.iloc[-2]
 
-    if stop_loss_price and latest['close'] < stop_loss_price * 0.95:
+    if stop_loss_price and latest['close'] < stop_loss_price * 0.90:
         print("Stop loss triggered.")
         return 'sell', latest['ATR']
 
-    if latest['close'] <= latest['BBL_20_2.0'] and latest['RSI'] < 30 and latest['MA50'] > previous['MA50']:
+    if latest['close'] <= latest['BBL_20_2.0'] and latest['RSI'] < 40 and latest['MA50'] > previous['MA50']:
         stop_loss_price = latest['close']
         return 'buy', latest['ATR']
 
-    elif latest['close'] >= latest['BBU_20_2.0'] and latest['RSI'] > 70 and latest['MA50'] < previous['MA50']:
+    elif latest['close'] >= latest['BBU_20_2.0'] and latest['RSI'] > 60 and latest['MA50'] < previous['MA50']:
         stop_loss_price = None
         return 'sell', latest['ATR']
 
