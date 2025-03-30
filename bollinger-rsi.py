@@ -105,7 +105,7 @@ while True:
     if action == 'buy' and current_atr and current_atr > 0:
         stop_loss_pct = 0.05
         risk_per_unit = price * stop_loss_pct
-        max_position_size_usd = min(RISK_PER_TRADE_USD / stop_loss_pct, usd_balance)
+        max_position_size_usd = min((RISK_PER_TRADE_USD * 2) / stop_loss_pct, usd_balance)
 
         if max_position_size_usd >= MIN_TRADE_USD:
             amount = max_position_size_usd / price
