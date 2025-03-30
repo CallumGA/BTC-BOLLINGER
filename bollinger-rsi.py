@@ -19,7 +19,7 @@ symbol = 'BTC-USD'
 timeframe = 'FIFTEEN_MINUTE'
 
 initial_usd = 1000
-RISK_PER_TRADE_USD = 25
+RISK_PER_TRADE_USD = 50
 ATR_PERIOD = 14
 MIN_TRADE_USD = 10
 
