@@ -7,12 +7,11 @@ from dotenv import load_dotenv
 from coinbase.rest import RESTClient
 
 CSV_PATH = os.path.abspath('trade_history.csv')
-USDC_SYMBOL = 'USDC-USD'
-BTC_SYMBOL = 'BTC-USD'
+TRADING_PAIR = 'BTC-USDC'
 TIMEFRAME = 'FIFTEEN_MINUTE'
 ATR_PERIOD = 14
-RISK_PER_TRADE_USD = 40
-MIN_TRADE_USD = 10
+RISK_PER_TRADE_USDC = 40
+MIN_TRADE_USDC = 10
 PROFIT_CONVERT_THRESHOLD = 40
 
 load_dotenv()
@@ -25,8 +24,8 @@ if os.path.isfile(CSV_PATH):
     trade_history = pd.read_csv(CSV_PATH)
 else:
     trade_history = pd.DataFrame(columns=[
-        'Timestamp', 'Type', 'Price (USD)', 'Amount',
-        'Profit/Loss (USD)', 'USDC Balance'
+        'Timestamp', 'Type', 'Price (USDC)', 'Amount',
+        'Profit/Loss (USDC)', 'USDC Balance'
     ])
 
 stop_loss_price = None
@@ -92,72 +91,71 @@ def trading_logic(df):
 def get_balances():
     accounts = client.get_accounts()
     btc_balance = float(next((a['available_balance']['value'] for a in accounts['accounts'] if a['currency'] == 'BTC'), 0))
-    usd_balance = float(next((a['available_balance']['value'] for a in accounts['accounts'] if a['currency'] == 'USD'), 0))
     usdc_balance = float(next((a['available_balance']['value'] for a in accounts['accounts'] if a['currency'] == 'USDC'), 0))
-    return btc_balance, usd_balance, usdc_balance
+    return btc_balance, usdc_balance
 
 while True:
     try:
-        df = fetch_ohlcv(BTC_SYMBOL, TIMEFRAME)
+        df = fetch_ohlcv(TRADING_PAIR, TIMEFRAME)
         if df.isnull().values.any():
             print("⚠️ Missing values in indicators, skipping iteration.")
             time.sleep(60)
             continue
 
         action, current_atr = trading_logic(df)
-        price = float(client.get_product(product_id=BTC_SYMBOL)['price'])
+        price = float(client.get_product(product_id=TRADING_PAIR)['price'])
 
     except Exception as e:
         print(f"⚠️ Error during data fetch or analysis: {e}")
         time.sleep(60)
         continue
 
-    btc_balance, usd_balance, usdc_balance = get_balances()
+    btc_balance, usdc_balance = get_balances()
 
     print(f"[DEBUG] Action: {action.upper()}, Stop Loss: {stop_loss_price}, ATR: {current_atr:.2f}")
-    print(f"[DEBUG] USD Balance: ${usd_balance:.2f}, BTC Balance: {btc_balance:.8f}, Price: ${price:.2f}")
+    print(f"[DEBUG] USDC Balance: ${usdc_balance:.2f}, BTC Balance: {btc_balance:.8f}, Price: ${price:.2f}")
 
     if action == 'buy' and current_atr and current_atr > 0:
         stop_loss_pct = 0.05
         risk_per_unit = price * stop_loss_pct
-        amount = RISK_PER_TRADE_USD / risk_per_unit
-        usd_to_use = amount * price
+        amount = RISK_PER_TRADE_USDC / risk_per_unit
+        usdc_to_use = amount * price
 
-        if usd_to_use <= usd_balance and usd_to_use >= MIN_TRADE_USD:
+        if usdc_to_use <= usdc_balance and usdc_to_use >= MIN_TRADE_USDC:
             try:
                 client.create_order(
                     client_order_id=str(datetime.now().timestamp()),
-                    product_id=BTC_SYMBOL,
+                    product_id=TRADING_PAIR,
                     side='BUY',
                     order_type='MARKET',
-                    funds=str(round(usd_to_use, 2))
+                    funds=str(round(usdc_to_use, 2))
                 )
-                print(f"✅ Bought BTC worth ${round(usd_to_use, 2)} at ${price:.2f}")
+                print(f"✅ Bought BTC worth ${round(usdc_to_use, 2)} at ${price:.2f}")
             except Exception as e:
                 print(f"⚠️ Failed to execute BTC buy: {e}")
 
     elif action == 'sell' and btc_balance >= 0.00001:
         try:
             amount_to_sell = btc_balance
-            total_usd = amount_to_sell * price
+            total_usdc = amount_to_sell * price
 
             client.create_order(
                 client_order_id=str(datetime.now().timestamp()),
-                product_id=BTC_SYMBOL,
+                product_id=TRADING_PAIR,
                 side='SELL',
                 order_type='MARKET',
                 size=str(amount_to_sell)
             )
 
-            print(f"✅ Sold BTC: {amount_to_sell:.8f} for ~${total_usd:.2f}")
-            profit_accumulator += total_usd
+            print(f"✅ Sold BTC: {amount_to_sell:.8f} for ~${total_usdc:.2f}")
+            profit_accumulator += total_usdc
 
             new_trade = {
                 'Timestamp': datetime.now(),
                 'Type': 'Sell BTC',
-                'Price (USD)': price,
+                'Price (USDC)': price,
                 'Amount': amount_to_sell,
-                'Profit/Loss (USD)': round(total_usd, 2),
+                'Profit/Loss (USDC)': round(total_usdc, 2),
                 'USDC Balance': round(usdc_balance, 2)
             }
 
@@ -167,20 +165,10 @@ while True:
         except Exception as e:
             print(f"⚠️ Failed to execute BTC sell: {e}")
 
-    # Convert profits to USDC
+    # Profit conversion (optional future logic if needed)
     if profit_accumulator >= PROFIT_CONVERT_THRESHOLD:
-        try:
-            client.create_order(
-                client_order_id=str(datetime.now().timestamp()),
-                product_id=USDC_SYMBOL,
-                side='BUY',
-                order_type='MARKET',
-                funds=str(PROFIT_CONVERT_THRESHOLD)
-            )
-            profit_accumulator -= PROFIT_CONVERT_THRESHOLD
-            print(f"💰 Converted $40 USD profit into USDC.")
-        except Exception as e:
-            print(f"⚠️ Failed to convert profit to USDC: {e}")
+        print(f"💰 Profit reached ${PROFIT_CONVERT_THRESHOLD}! Already in USDC, no further conversion needed.")
+        profit_accumulator -= PROFIT_CONVERT_THRESHOLD
 
     print("-" * 60)
     time.sleep(900)
