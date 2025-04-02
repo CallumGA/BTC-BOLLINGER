@@ -6,6 +6,7 @@ import os
 from dotenv import load_dotenv
 from coinbase.rest import RESTClient
 
+# === CONFIGURATION ===
 CSV_PATH = os.path.abspath('trade_history.csv')
 TRADING_PAIR = 'BTC-USDC'
 TIMEFRAME = 'FIFTEEN_MINUTE'
@@ -14,12 +15,13 @@ RISK_PER_TRADE_USDC = 40
 MIN_TRADE_USDC = 10
 PROFIT_CONVERT_THRESHOLD = 40
 
+# === AUTHENTICATION ===
 load_dotenv()
 api_key = os.getenv('COINBASE_API_KEY')
-api_secret = os.getenv('COINBASE_API_SECRET').replace('\\n', '\n')
+api_secret = os.getenv('COINBASE_API_SECRET')
 client = RESTClient(api_key=api_key, api_secret=api_secret)
 
-# Load trade history
+# === CSV LOGGING ===
 if os.path.isfile(CSV_PATH):
     trade_history = pd.read_csv(CSV_PATH)
 else:
@@ -28,9 +30,11 @@ else:
         'Profit/Loss (USDC)', 'USDC Balance'
     ])
 
+# === GLOBAL STATE ===
 stop_loss_price = None
 profit_accumulator = 0.0
 
+# === FETCH MARKET DATA ===
 def fetch_ohlcv(symbol, timeframe='FIFTEEN_MINUTE', limit=100):
     end = datetime.now(UTC)
     start = end - timedelta(minutes=15 * limit)
@@ -61,13 +65,13 @@ def fetch_ohlcv(symbol, timeframe='FIFTEEN_MINUTE', limit=100):
     df[['open', 'high', 'low', 'close', 'volume']] = df[['open', 'high', 'low', 'close', 'volume']].astype(float)
     return df
 
+# === STRATEGY LOGIC ===
 def trading_logic(df):
     global stop_loss_price
 
     df['RSI'] = ta.rsi(df['close'], length=14)
     bbands = ta.bbands(df['close'], length=20, std=2.0)
     atr = ta.atr(df['high'], df['low'], df['close'], length=ATR_PERIOD)
-
     df = df.join([bbands, atr.rename('ATR')])
     latest = df.iloc[-1]
 
@@ -88,12 +92,14 @@ def trading_logic(df):
 
     return 'hold', latest['ATR']
 
+# === GET ACCOUNT BALANCES ===
 def get_balances():
     accounts = client.get_accounts()
     btc_balance = float(next((a['available_balance']['value'] for a in accounts['accounts'] if a['currency'] == 'BTC'), 0))
     usdc_balance = float(next((a['available_balance']['value'] for a in accounts['accounts'] if a['currency'] == 'USDC'), 0))
     return btc_balance, usdc_balance
 
+# === MAIN LOOP ===
 while True:
     try:
         df = fetch_ohlcv(TRADING_PAIR, TIMEFRAME)
@@ -115,6 +121,7 @@ while True:
     print(f"[DEBUG] Action: {action.upper()}, Stop Loss: {stop_loss_price}, ATR: {current_atr:.2f}")
     print(f"[DEBUG] USDC Balance: ${usdc_balance:.2f}, BTC Balance: {btc_balance:.8f}, Price: ${price:.2f}")
 
+    # === BUY BTC ===
     if action == 'buy' and current_atr and current_atr > 0:
         stop_loss_pct = 0.05
         risk_per_unit = price * stop_loss_pct
@@ -127,13 +134,17 @@ while True:
                     client_order_id=str(datetime.now().timestamp()),
                     product_id=TRADING_PAIR,
                     side='BUY',
-                    order_type='MARKET',
-                    funds=str(round(usdc_to_use, 2))
+                    order_configuration={
+                        "market_market_ioc": {
+                            "quote_size": str(round(usdc_to_use, 2))
+                        }
+                    }
                 )
                 print(f"✅ Bought BTC worth ${round(usdc_to_use, 2)} at ${price:.2f}")
             except Exception as e:
                 print(f"⚠️ Failed to execute BTC buy: {e}")
 
+    # === SELL BTC ===
     elif action == 'sell' and btc_balance >= 0.00001:
         try:
             amount_to_sell = btc_balance
@@ -143,8 +154,11 @@ while True:
                 client_order_id=str(datetime.now().timestamp()),
                 product_id=TRADING_PAIR,
                 side='SELL',
-                order_type='MARKET',
-                size=str(amount_to_sell)
+                order_configuration={
+                    "market_market_ioc": {
+                        "base_size": str(amount_to_sell)
+                    }
+                }
             )
 
             print(f"✅ Sold BTC: {amount_to_sell:.8f} for ~${total_usdc:.2f}")
@@ -165,10 +179,10 @@ while True:
         except Exception as e:
             print(f"⚠️ Failed to execute BTC sell: {e}")
 
-    # Profit conversion (optional future logic if needed)
+    # === PROFIT TRACKING ===
     if profit_accumulator >= PROFIT_CONVERT_THRESHOLD:
         print(f"💰 Profit reached ${PROFIT_CONVERT_THRESHOLD}! Already in USDC, no further conversion needed.")
         profit_accumulator -= PROFIT_CONVERT_THRESHOLD
 
     print("-" * 60)
-    time.sleep(900)
+    time.sleep(900)  # wait 15 min before next check
