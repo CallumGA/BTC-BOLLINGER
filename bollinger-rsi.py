@@ -123,29 +123,23 @@ while True:
 
     # === BUY BTC ===
     if action == 'buy' and current_atr and current_atr > 0:
-        stop_loss_pct = 0.05
-        risk_per_unit = price * stop_loss_pct
-        max_risk = min(RISK_PER_TRADE_USDC, usdc_balance)
+        usdc_to_use = usdc_balance  # Use all available USDC
 
-        if risk_per_unit > 0:
-            amount = max_risk / risk_per_unit
-            usdc_to_use = amount * price
-
-            if usdc_to_use >= MIN_TRADE_USDC:
-                try:
-                    client.create_order(
-                        client_order_id=str(datetime.now().timestamp()),
-                        product_id=TRADING_PAIR,
-                        side='BUY',
-                        order_configuration={
-                            "market_market_ioc": {
-                                "quote_size": str(round(usdc_to_use, 2))
-                            }
+        if usdc_to_use >= MIN_TRADE_USDC:
+            try:
+                client.create_order(
+                    client_order_id=str(datetime.now().timestamp()),
+                    product_id=TRADING_PAIR,
+                    side='BUY',
+                    order_configuration={
+                        "market_market_ioc": {
+                            "quote_size": str(round(usdc_to_use, 2))
                         }
-                    )
-                    print(f"✅ Bought BTC worth ${round(usdc_to_use, 2)} at ${price:.2f}")
-                except Exception as e:
-                    print(f"⚠️ Failed to execute BTC buy: {e}")
+                    }
+                )
+                print(f"✅ Bought BTC using all USDC: ${round(usdc_to_use, 2)} at ${price:.2f}")
+            except Exception as e:
+                print(f"⚠️ Failed to execute BTC buy: {e}")
 
     # === SELL BTC ===
     elif action == 'sell' and btc_balance >= 0.00001:
